@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "Display"
+		},
+		{
+			"path": "BaseDriver"
+		},
+		{
+			"name": "Rover Rotator",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
