@@ -25,10 +25,6 @@ uint8_t remoteAddress[] = {0xE8, 0x31, 0xCD, 0x18, 0xDF, 0x98}; //Display
 void azStuff();
 void checkAZEL();
 
-byte azSpeed = azSpeedMin;
-byte wasLeft = false;
-byte wasRight = false;
-
 unsigned long rxTimeoutStart = millis();
 unsigned long txPacketStart = millis();
 unsigned long azTimeStart = millis();
@@ -68,7 +64,7 @@ esp_now_peer_info_t peerInfo;
 
 void setup() 
 {
-  Serial.begin(19200);
+  Serial.begin(115200);
   Serial1.begin(19200);
 
   WiFi.mode(WIFI_MODE_STA);
@@ -133,36 +129,27 @@ void azStuff()
     remoteData.right = false;
   }
   
-  if(remoteData.left && remoteData.right)
-  {
-    analogWrite(az_left_pin, 0);
-    analogWrite(az_right_pin, 0);
-  }
-  else if(remoteData.left)
-  {
-    analogWrite(az_right_pin, 0);
-    analogWrite(az_left_pin, azSpeed);
+  if(remoteData.left&&!localData.right){
+    analogWrite(az_left_pin, 255);//localData.azSpeed);
     localData.left = true;
     localData.right = false;
   }
-  else if(remoteData.right)
-  {
+  else if(remoteData.right&&!localData.left){
     analogWrite(az_left_pin, 0);
-    analogWrite(az_right_pin, azSpeed);
+    analogWrite(az_right_pin, 255);//localData.azSpeed);
     localData.left = false;
     localData.right = true;
   }
-  else 
-  {
-    if(wasLeft)
+  else{
+    if(localData.azSpeed>azSpeedMin && localData.left)
     {
       analogWrite(az_right_pin, 0);
-      analogWrite(az_left_pin, azSpeed);
+      analogWrite(az_left_pin, 255);//localData.azSpeed);
     }
-    else if(wasRight)
+    else if(localData.azSpeed>azSpeedMin && localData.right)
     {
       analogWrite(az_left_pin, 0);
-      analogWrite(az_right_pin, azSpeed);
+      analogWrite(az_right_pin, 255);//localData.azSpeed);
     }
     else
     {
@@ -177,30 +164,19 @@ void azStuff()
   {
     if(remoteData.left || remoteData.right)
     {
-      if(azSpeed == 0) azSpeed = azSpeedMin;
+      if(localData.azSpeed == 0) localData.azSpeed = azSpeedMin;
 
-      if(remoteData.left)
-      {
-        wasLeft = true;
-        wasRight= false;
-      }
-      else if(remoteData.right)
-      {
-        wasRight = true;
-        wasLeft = false;
-      }
-
-      if(azSpeed + azSpeedAccelStep <= azSpeedMax) azSpeed += azSpeedAccelStep;
-      else azSpeed = azSpeedMax;
+      if(localData.azSpeed + azSpeedAccelStep <= azSpeedMax) localData.azSpeed += azSpeedAccelStep;
+      else localData.azSpeed = azSpeedMax;
     }
 
     else
     {
-      if(azSpeed + azSpeedDecelStep >= azSpeedMin) azSpeed += azSpeedDecelStep;
-      else azSpeed = 0;
+      if(localData.azSpeed + azSpeedDecelStep >= azSpeedMin) localData.azSpeed += azSpeedDecelStep;
+      else localData.azSpeed = 0;
     }
     azTimeStart = millis();
-    localData.azSpeed = azSpeed;
+    localData.azSpeed = localData.azSpeed;
   }
 }
 void loop() 
@@ -211,14 +187,14 @@ void loop()
   while(Serial1.available() > 0) //Read AZ/EL
   {
     char charTemp = Serial1.read();
-    Serial.write(charTemp);
+    //Serial.write(charTemp);
     JY901.CopeSerialData(charTemp);
   }
-  while(Serial.available() > 0)
+  /*while(Serial.available() > 0)
   {
     char charTemp1 = Serial.read();
     Serial1.write(charTemp1);
-  }
+  }*/
 
   if(millis() - rxTimeoutStart >= rxTimeoutInterval)//Timeout
   {
@@ -246,4 +222,14 @@ void loop()
     esp_now_send(remoteAddress, (uint8_t *) &localData, sizeof(localData));
     txPacketStart = millis();
   }
+
+  //Serial.print(remoteData.left);
+  //Serial.print(",");
+  //Serial.print(localData.left);
+  //Serial.print(";");  
+  //Serial.print(remoteData.right);
+  //Serial.print(",");
+  //Serial.print(localData.right);
+  //Serial.print(";");
+  //Serial.println(localData.azSpeed);
 }

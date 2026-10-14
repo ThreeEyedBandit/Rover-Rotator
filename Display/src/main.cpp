@@ -12,13 +12,13 @@
 #define txPacketInterval 10
 #define rxTimeoutInterval 200
 #define displayUpdateInterval 50
-#define buttonPressInterval 25
+#define buttonPressInterval 20
 
-/*#define I2C_SDA 18
+#define I2C_SDA 18
 #define I2C_SCL 19
 #define RST_N_PIN 0
 #define INT_N_PIN 0
-*/
+
 
 //uint8_t remoteAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //All
 
@@ -28,14 +28,17 @@ uint8_t remoteAddress[] = {0x58, 0xCF, 0x79, 0xA5, 0xE3, 0xD8}; //New Driver
 TFT_eSPI display = TFT_eSPI();
 TFT_eSprite tempSprite = TFT_eSprite(&display);
 
-/*FT6336U ft6336u(I2C_SDA, I2C_SCL, RST_N_PIN, INT_N_PIN);*/
+FT6336U ft6336u(I2C_SDA, I2C_SCL, RST_N_PIN, INT_N_PIN);
 
 long backColor = TFT_BLACK; long foreColor = TFT_WHITE;
+
+boolean blnTouched = false;
 
 unsigned long rxTimeoutStart = millis();
 unsigned long buttonPressStart = millis();
 unsigned long txPacketStart = millis();
 unsigned long displayUpdateStart = millis();
+//unsigned long lastButtonPass = millis();
 
 String currentGrid = "******";
 
@@ -66,14 +69,13 @@ dataPackage remoteData;
 
 bool blnConnected = false;
 
-void updateDisplay();void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len);void checkGPSInfo();
+void updateDisplay();void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len);void checkGPSInfo();
 String toGrid(long tmpLat, long tmpLon);
 
 esp_now_peer_info_t peerInfo;
 TinyGPSPlus gps;
 
-void setup() 
-{
+void setup() {
   WiFi.mode(WIFI_MODE_STA);
   esp_now_init();
   memcpy(peerInfo.peer_addr, remoteAddress, 6);
@@ -84,7 +86,7 @@ void setup()
   esp_now_register_recv_cb(OnDataRecv);
 
   Serial.begin(115200);
-  Serial2.begin(9600, SERIAL_8N1, 33, 14); //GPS
+  Serial2.begin(115200, SERIAL_8N1, 33, 14); //GPS
 
   Serial.print("MAC Address:  ");
   Serial.println(WiFi.macAddress());
@@ -92,38 +94,50 @@ void setup()
   display.init();
   display.setRotation(0);
 
-  pinMode(34,INPUT);
-  pinMode(35,INPUT);
+  //pinMode(34,INPUT);
+  //pinMode(35,INPUT);
 
-  //ft6336u.begin();
-
+  ft6336u.begin();
   updateDisplay();
 }
 void loop() 
 {  
-  /*if(ft6336u.read_touch1_event() == 0x02){if(ft6336u.read_touch1_x() < 160)localData.left = true;else localData.left = false;if(ft6336u.read_touch1_x() > 160)localData.right = true;else localData.right = false;}else{if(localData.left)localData.left = false;if(localData.right)localData.right = false;}
-*/
+  if(millis() - buttonPressStart >= buttonPressInterval){
+    if(ft6336u.read_touch1_event() == 0x02){
+      if(!blnTouched){
+        if(ft6336u.read_touch1_x() < 160){
+        localData.left = true;
+        }
+        else{
+          localData.left = false;
+        }
 
-  if(millis() - buttonPressStart >= buttonPressInterval)
-  {
-    if(!digitalRead(34))
-      localData.left = true;
-    else
-      localData.left = false;
-    if(!digitalRead(35))
-      localData.right = true;
-    else
-      localData.right = false;
-  }
-  else
-  {
-    if(localData.left)
-      localData.left = false;
-    if(localData.right)
-      localData.right = false;
+        if(ft6336u.read_touch1_x() > 160){
+          localData.right = true;
+        }
+        else{
+          localData.right = false;
+        }
+      blnTouched = true;   
+      } 
+    }
+    else{
+    blnTouched = false;
+      if(localData.left)localData.left = false;
+      if(localData.right)localData.right = false;
+    }
   }
 
-  if(digitalRead(34) && digitalRead(35))buttonPressStart = millis();
+  /*
+  int tempTime = millis() - lastButtonPass;
+  lastButtonPass = millis();
+  Serial.print(localData.left);
+  Serial.print(" : ");
+  Serial.print(localData.right);
+  Serial.print (" : ");
+  Serial.print(blnTouched);
+  Serial.print(" : ");
+  Serial.println(tempTime);*/
 
   while(Serial2.available() > 0) {char charTemp1 = Serial2.read();if(gps.encode(charTemp1)) checkGPSInfo();}
 
@@ -131,7 +145,7 @@ void loop()
   if(millis() - txPacketStart >= txPacketInterval)esp_now_send(remoteAddress, (uint8_t *) &localData, sizeof(localData));
   if(millis() - displayUpdateStart >= displayUpdateInterval){updateDisplay();displayUpdateStart = millis();}
 }
-void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) 
+void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) 
 {
   memcpy(&remoteData, incomingData, sizeof(remoteData));
   rxTimeoutStart = millis();
