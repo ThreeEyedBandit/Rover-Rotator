@@ -3,6 +3,9 @@
 #include <esp_now.h>
 #include <JY901.h>
 #include <Adafruit_NeoPixel.h>
+#include "data_package.h"
+#include "azimuth.h"
+#include "gs232b.h"
 
 #define txPacketInterval 100
 #define rxTimeoutInterval 300
@@ -17,33 +20,17 @@
 
 uint8_t remoteAddress[] = {0xE8, 0x31, 0xCD, 0x18, 0xDF, 0x98}; // Display
 
-typedef struct dataPackage
-{
-  float latitude;
-  float longitude;
-
-  int dateYear;
-  int currentAltitude;
-  int currentAz;
-  int currentEl;
-
-  byte dateMonth;
-  byte dateDay;
-  byte timeHour;
-  byte timeMinute;
-  byte timeSecond;
-  byte azSpeed;
-
-  bool left;
-  bool right;
-}
-dataPackage;
-
 dataPackage localData;
 dataPackage remoteData;
 
 bool blnConnected = false;
+bool blnResetPrev = false;
+bool blnEnforceAzLimits = false;
 uint8_t azActiveDir = AZ_DIR_NONE;
+
+int gsZeroOffset = 0;
+bool blnGsZeroPending = false;
+AzimuthTracker azTrack;
 
 unsigned long rxTimeoutStart = 0;
 unsigned long txPacketStart = 0;
@@ -59,24 +46,75 @@ void setAzOutputs(uint8_t dir)
 
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
 {
+  (void)mac;
+  if(len < (int)sizeof(remoteData)) return;
   memcpy(&remoteData, incomingData, sizeof(remoteData));
   rxTimeoutStart = millis();
 }
 
+static int imuAzimuthRaw()
+{
+  int tempAz = (int)((float)JY901.stcAngle.Angle[2] / 32768 * 180);
+  tempAz = map(tempAz, 0, 359, 359, 0);
+  return azimuthNormalize360(tempAz);
+}
+
+// Snap the current reading to the CCW hard limit. Not a slew.
+static void handleAzHomeReset()
+{
+  bool request = remoteData.resetAzHome;
+  if(request && !blnResetPrev)
+  {
+    if(remoteData.gs232Flags & GS232_FLAG_AZ)
+    {
+      gsZeroOffset = remoteData.gs232Az;
+      blnGsZeroPending = false;
+    }
+    else
+      blnGsZeroPending = true;
+    azimuthResetToHome(&azTrack);
+    localData.currentAz = AZ_HOME;
+    localData.azHomeEpoch++;
+  }
+  blnResetPrev = request;
+}
+
 void checkAZEL()
 {
-  int tempAz = ((float)JY901.stcAngle.Angle[2] / 32768 * 180);
-  int tempEl = ((float)JY901.stcAngle.Angle[0] / 32768 * 180);
-  tempAz = map(tempAz, 0, 359, 359, 0);
+  azimuthApplyRaw(&azTrack, imuAzimuthRaw());
 
-  if(tempAz < 0) tempAz += 360;
-  else if(tempAz >= 360) tempAz -= 360;
-
+  int tempEl = (int)((float)JY901.stcAngle.Angle[0] / 32768 * 180);
   if(tempEl > 90) tempEl = 90;
   else if(tempEl < 0) tempEl = 0;
 
-  localData.currentAz = tempAz;
-  localData.currentEl = tempEl;
+  bool gsAz = (remoteData.gs232Flags & GS232_FLAG_AZ) != 0;
+  bool gsEl = (remoteData.gs232Flags & GS232_FLAG_EL) != 0;
+
+  if(gsAz)
+  {
+    if(blnGsZeroPending)
+    {
+      gsZeroOffset = remoteData.gs232Az;
+      blnGsZeroPending = false;
+    }
+    localData.currentAz = azimuthFromAbsolute(remoteData.gs232Az, gsZeroOffset);
+  }
+  else
+    localData.currentAz = azTrack.mechanical;
+
+  if(gsEl)
+  {
+    int el = remoteData.gs232El;
+    if(el < 0) el = 0;
+    else if(el > GS232B_EL_MAX) el = GS232B_EL_MAX;
+    localData.currentEl = el;
+  }
+  else
+    localData.currentEl = tempEl;
+
+  // GS-232B 0° is already the CCW stop. The IMU reading is only a hard
+  // stop after the operator syncs home.
+  blnEnforceAzLimits = azTrack.homed || gsAz;
 }
 
 void azStuff()
@@ -114,6 +152,12 @@ void azStuff()
   if(leftHeld && !rightHeld) wantDir = AZ_DIR_LEFT;
   else if(rightHeld && !leftHeld) wantDir = AZ_DIR_RIGHT;
 
+  // Left is CCW, toward home (0°). Right is CW, toward 450°.
+  if(wantDir == AZ_DIR_LEFT && azimuthBlockCcw(blnEnforceAzLimits, localData.currentAz))
+    wantDir = AZ_DIR_NONE;
+  if(wantDir == AZ_DIR_RIGHT && azimuthBlockCw(blnEnforceAzLimits, localData.currentAz))
+    wantDir = AZ_DIR_NONE;
+
   // Stop fully before allowing a direction change
   if(azActiveDir != AZ_DIR_NONE && wantDir != AZ_DIR_NONE && wantDir != azActiveDir)
     azActiveDir = AZ_DIR_NONE;
@@ -129,6 +173,7 @@ void azStuff()
 void setup()
 {
   Serial1.begin(19200);
+  azimuthTrackerInit(&azTrack);
 
   WiFi.mode(WIFI_MODE_STA);
   esp_now_init();
@@ -150,11 +195,12 @@ void setup()
 
 void loop()
 {
-  azStuff();
-  checkAZEL();
-
   while(Serial1.available() > 0)
     JY901.CopeSerialData(Serial1.read());
+
+  handleAzHomeReset();
+  checkAZEL();
+  azStuff();
 
   bool connected = (millis() - rxTimeoutStart < rxTimeoutInterval);
   if(connected != blnConnected)
