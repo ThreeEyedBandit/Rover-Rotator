@@ -273,9 +273,15 @@ static void gs232CopyToPacket()
   portEXIT_CRITICAL(&gsMux);
 }
 
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len)
 {
   (void)info;
+#else
+void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len)
+{
+  (void)mac;
+#endif
   if(len < (int)sizeof(remoteData)) return;
   memcpy(&remoteData, incomingData, sizeof(remoteData));
   rxTimeoutStart = millis();

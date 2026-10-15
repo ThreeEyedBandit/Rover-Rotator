@@ -1,8 +1,9 @@
 #pragma once
 
 // 320x480 portrait UI. Azimuth and elevation values use FreeSerif 24pt at
-// text size 2 (yAdvance 34 * 2 = 68). The home control sits in the band
-// directly under that elevation box. Touch X already uses panel pixels
+// text size 2. Digit ink ends 70px under the top datum (ascent 33, digit
+// height 33, yOffset -31: (33 - 31 + 33) * 2). The home control sits in the
+// band directly under that elevation ink. Touch X already uses panel pixels
 // (left of 160 / right of 160); touch Y uses the same pixel space.
 
 static const int UI_SCREEN_W = 320;
@@ -11,7 +12,7 @@ static const int UI_MID_X = 160;
 
 static const int UI_AZ_Y = 53;
 static const int UI_EL_Y = 146;
-static const int UI_EL_H = 68;
+static const int UI_EL_H = 70;
 static const int UI_HOME_GAP = 8;
 static const int UI_HOME_X = 16;
 static const int UI_HOME_Y = UI_EL_Y + UI_EL_H + UI_HOME_GAP;
